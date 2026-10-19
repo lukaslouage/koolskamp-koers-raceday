@@ -85,6 +85,7 @@ KK.ParcoursMap = class {
     });
     map.on('moveend', () => this.callbacks.onMove({ center: map.getCenter().toArray(), zoom: map.getZoom(), bearing: map.getBearing() }));
     map.on('move', () => { if (this.callbacks.onView) this.callbacks.onView(); });
+    map.on('zoomend', () => this.updateBeside());
     map.on('click', e => { if (this.callbacks.onMapClick) this.callbacks.onMapClick(e.lngLat.lat, e.lngLat.lng); });
     if (window.ResizeObserver) {
       let last = '';
@@ -217,34 +218,25 @@ KK.ParcoursMap = class {
     if (this.options.shields && !theme.original) this.addShields(before);
     [...this.tracks].reverse().filter(t => t.visible !== false).forEach(track => {
       const id = `pm-${track.id}`, style = track.style || 'solid';
-      // A route drawn beside the others: its shared parts are pieces with an offset (0 to 1, eased in and out).
-      const others = this.tracks.filter(t => t !== track && t.visible !== false);
-      const beside = track.beside && others.length ? KK.ParcoursMap.besidePieces(track.points, others) : null;
-      map.addSource(id, { type: 'geojson', data: beside
-        ? { type: 'FeatureCollection', features: beside.map(piece => ({ type: 'Feature', properties: { off: piece.off }, geometry: { type: 'LineString', coordinates: piece.points.map(p => [p[1], p[0]]) } })) }
-        : { type: 'Feature', properties: { off: 0 }, geometry: { type: 'LineString', coordinates: track.points.map(p => [p[1], p[0]]) } } });
+      map.addSource(id, { type: 'geojson', data: this.trackGeometry(track) });
       const border = KK.ParcoursMap.borderFor(track.color, theme), inner = KK.ParcoursMap.contrast(track.color);
       const striped = style === 'double' || style === 'neutral';
       const w = striped ? width * 1.3 : width;
       const layout = cap => ({ 'line-join': 'round', 'line-cap': cap });
-      // Centre to centre: half of each line, their borders and a small gap. Right of the direction is positive.
-      const shift = beside ? ['*', ['get', 'off'], (track.beside === 'left' ? -1 : 1) * (w + 4.5)] : 0;
-      const offset = beside ? { 'line-offset': shift } : {};
       map.addLayer({ id: `${id}-shadow`, type: 'line', source: id, layout: layout('round'),
-        paint: { 'line-color': theme.dark ? '#000000' : '#202024', 'line-opacity': theme.dark ? 0.5 : 0.22, 'line-width': w + 6, 'line-blur': 4, 'line-translate': [0, 1.5], ...offset } }, before);
+        paint: { 'line-color': theme.dark ? '#000000' : '#202024', 'line-opacity': theme.dark ? 0.5 : 0.22, 'line-width': w + 6, 'line-blur': 4, 'line-translate': [0, 1.5] } }, before);
       map.addLayer({ id: `${id}-casing`, type: 'line', source: id, layout: layout('round'),
-        paint: { 'line-color': border, 'line-width': w + (theme.thinBorder ? 2.4 : 3.5), ...offset } }, before);
+        paint: { 'line-color': border, 'line-width': w + (theme.thinBorder ? 2.4 : 3.5) } }, before);
       map.addLayer({ id: `${id}-line`, type: 'line', source: id, layout: layout(style === 'dashed' ? 'butt' : 'round'),
-        paint: { 'line-color': track.color, 'line-width': w, ...offset, ...(style === 'dashed' ? { 'line-dasharray': [2, 1.4] } : {}) } }, before);
+        paint: { 'line-color': track.color, 'line-width': w, ...(style === 'dashed' ? { 'line-dasharray': [2, 1.4] } : {}) } }, before);
       if (striped) {
         map.addLayer({ id: `${id}-stripe`, type: 'line', source: id, layout: layout(style === 'neutral' ? 'butt' : 'round'),
-          paint: { 'line-color': inner, 'line-width': Math.max(1.4, w * 0.36), ...offset, ...(style === 'neutral' ? { 'line-dasharray': [1.6, 1.6] } : {}) } }, before);
+          paint: { 'line-color': inner, 'line-width': Math.max(1.4, w * 0.36), ...(style === 'neutral' ? { 'line-dasharray': [1.6, 1.6] } : {}) } }, before);
       }
       if (this.options.arrows && style !== 'neutral') {
         // Small chevrons on the line: in the route colour on the middle stripe, else in the contrasting colour.
         const size = (w * (striped ? 1 : 0.95)) / 12;
-        // Arrows cannot be moved sideways: on the parts beside another route they are left out.
-        map.addLayer({ id: `${id}-arrows`, type: 'symbol', source: id, filter: ['==', ['get', 'off'], 0],
+        map.addLayer({ id: `${id}-arrows`, type: 'symbol', source: id,
           layout: { 'symbol-placement': 'line', 'symbol-spacing': 160, 'icon-image': 'pm-arrow', 'icon-size': size,
             'icon-rotation-alignment': 'map', 'icon-allow-overlap': true, 'icon-ignore-placement': true },
           paint: { 'icon-color': striped ? track.color : inner } }, before);
@@ -252,104 +244,157 @@ KK.ParcoursMap = class {
     });
   }
 
+  /** Line width in pixels as drawn: lines with a middle stripe are a bit wider. */
+  lineWidth(track) {
+    const width = KK.ParcoursMap.WIDTHS[this.options.width] || 5;
+    return track.style === 'double' || track.style === 'neutral' ? width * 1.3 : width;
+  }
+
   /**
-   * For every point of a line: does it run on top of one of the other routes (within 40 m)? Short runs of
-   * either kind (under 150 m) are smoothed away, so GPS noise does not make the line jump.
+   * The GeoJSON line of a route. A route set to run beside the others gets its shared parts moved aside, by
+   * exactly half of both lines and their borders, so the two touch. The distance is in pixels on the map, so the
+   * line is worked out again after every zoom (updateBeside).
    */
-  static sharedFlags(points, others, metres = 40) {
+  trackGeometry(track) {
+    const others = this.tracks.filter(t => t !== track && t.visible !== false);
+    let coords = track.points.map(p => [p[1], p[0]]);
+    if (track.beside && others.length && this.map) {
+      const mpp = this.metresPerPixel(), border = this.theme.thinBorder ? 1.2 : 1.75;
+      const gapPx = other => (this.lineWidth(track) + this.lineWidth(other)) / 2 + border;
+      coords = KK.ParcoursMap.besideLine(track.points, others, track.beside === 'left' ? -1 : 1, other => gapPx(other) * mpp);
+    }
+    return { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: coords } };
+  }
+
+  /** After a zoom: the routes that run beside others are worked out again for the new scale. */
+  updateBeside() {
+    if (!this.ready) return;
+    this.tracks.filter(t => t.beside && t.visible !== false).forEach(t => {
+      const source = this.map.getSource(`pm-${t.id}`);
+      if (source) source.setData(this.trackGeometry(t));
+    });
+  }
+
+  /**
+   * For every point of a line: the other route it runs on (within 40 m), or -1. Short runs of either kind
+   * (under 150 m) are smoothed away, so a small difference between two GPX files does not make the line jump.
+   */
+  static sharedWith(points, others, metres = 40) {
     const cell = 0.001, grid = new Map(), key = (a, b) => `${a},${b}`;
-    others.forEach(t => t.points.forEach(p => {
+    others.forEach((t, n) => t.points.forEach(p => {
       const k = key(Math.floor(p[0] / cell), Math.floor(p[1] / cell));
       if (!grid.has(k)) grid.set(k, []);
+      grid.get(k).push(n);
       grid.get(k).push(p);
     }));
-    const flags = points.map(p => {
+    const who = points.map(p => {
       const a = Math.floor(p[0] / cell), b = Math.floor(p[1] / cell);
+      let best = -1, bestD = metres;
       for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) {
-        const list = grid.get(key(a + i, b + j));
-        if (list && list.some(q => KK.gpx.haversineKm(p, q) * 1000 < metres)) return true;
+        const list = grid.get(key(a + i, b + j)) || [];
+        for (let m = 0; m < list.length; m += 2) {
+          const d = KK.gpx.haversineKm(p, list[m + 1]) * 1000;
+          if (d < bestD) { bestD = d; best = list[m]; }
+        }
       }
-      return false;
+      return best;
     });
     const cum = KK.gpx.cumulative(points);
-    for (const value of [false, true]) {
+    for (const shared of [false, true]) {
       let i = 0;
-      while (i < flags.length) {
-        if (flags[i] !== value) { i++; continue; }
+      while (i < who.length) {
+        if ((who[i] >= 0) !== shared) { i++; continue; }
         let j = i;
-        while (j + 1 < flags.length && flags[j + 1] === value) j++;
-        if (i > 0 && j < flags.length - 1 && cum[j] - cum[i] < 0.15) for (let k = i; k <= j; k++) flags[k] = !value;
+        while (j + 1 < who.length && (who[j + 1] >= 0) === shared) j++;
+        if (i > 0 && j < who.length - 1 && cum[j] - cum[i] < 0.15) {
+          const fill = shared ? -1 : who[i - 1];
+          for (let k = i; k <= j; k++) who[k] = fill;
+        }
         i = j + 1;
       }
     }
-    return { flags, cum };
+    return { who, cum };
   }
 
   /** Share of a line (0 to 1) that runs on top of the other routes. */
   static sharedShare(points, others) {
     if (!others.length || points.length < 2) return 0;
-    const { flags, cum } = KK.ParcoursMap.sharedFlags(points, others);
+    const { who, cum } = KK.ParcoursMap.sharedWith(points, others);
     let km = 0;
-    for (let i = 1; i < flags.length; i++) if (flags[i] && flags[i - 1]) km += cum[i] - cum[i - 1];
+    for (let i = 1; i < who.length; i++) if (who[i] >= 0 && who[i - 1] >= 0) km += cum[i] - cum[i - 1];
     return km / cum[cum.length - 1];
   }
 
   /**
-   * The line cut in pieces with an offset: 0 where it runs alone, 1 where it shares the road with another route,
-   * and steps in between over the first and last 120 m of a shared part, so it moves aside smoothly.
+   * The line moved aside (side 1 = right of the direction, -1 = left) where it shares the road with another
+   * route, by gapMetres(other) metres; over the first and last 200 m of a shared part it moves aside gradually.
+   * Outer corners get a round bend, inner corners a mitre, and small knots in tight corners are cut out.
+   * Returns [lon, lat] coordinates.
    */
-  static besidePieces(points, others) {
-    const { flags, cum } = KK.ParcoursMap.sharedFlags(points, others);
-    const ramp = 0.12, steps = 6;
-    // Distance to the nearest point that is not shared (0 when not shared), in both directions.
-    const offs = flags.map(() => 0);
-    let start = null;
-    for (let i = 0; i <= flags.length; i++) {
-      if (i < flags.length && flags[i]) { if (start === null) start = i; continue; }
-      if (start !== null) {
-        const end = i - 1, openStart = start > 0, openEnd = end < flags.length - 1;
-        for (let k = start; k <= end; k++) {
-          const fromStart = openStart ? cum[k] - cum[start] : Infinity, toEnd = openEnd ? cum[end] - cum[k] : Infinity;
-          const t = Math.min(1, Math.min(fromStart, toEnd) / ramp);
-          offs[k] = Math.round(t * steps) / steps;
-        }
-        start = null;
+  static besideLine(points, others, side, gapMetres) {
+    const { who, cum } = KK.ParcoursMap.sharedWith(points, others);
+    const ramp = 0.2, n = points.length;
+    const dist = new Array(n).fill(0);
+    for (let i = 0; i < n;) {
+      if (who[i] < 0) { i++; continue; }
+      let j = i;
+      while (j + 1 < n && who[j + 1] >= 0) j++;
+      for (let k = i; k <= j; k++) {
+        const fromStart = i > 0 ? cum[k] - cum[i] : Infinity, toEnd = j < n - 1 ? cum[j] - cum[k] : Infinity;
+        const t = Math.min(1, Math.min(fromStart, toEnd) / ramp);
+        dist[k] = (t * t * (3 - 2 * t)) * gapMetres(others[who[k]]); // smoothstep: no kink where it starts
+      }
+      i = j + 1;
+    }
+    // Flat metres around the first point are exact enough for a few kilometres.
+    const lat0 = points[0][0], kx = 111320 * Math.cos((lat0 * Math.PI) / 180), ky = 110574;
+    const xy = points.map(p => [p[1] * kx, p[0] * ky]);
+    const unit = (dx, dy) => { const l = Math.hypot(dx, dy) || 1; return [dx / l, dy / l]; };
+    const normal = (a, b) => { const [dx, dy] = unit(b[0] - a[0], b[1] - a[1]); return [dy * side, -dx * side]; };
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      const p = xy[i], d = dist[i];
+      if (!d) { out.push(p); continue; }
+      const nIn = i > 0 ? normal(xy[i - 1], p) : null, nOut = i < n - 1 ? normal(p, xy[i + 1]) : null;
+      if (!nIn || !nOut) { const m = nIn || nOut; out.push([p[0] + m[0] * d, p[1] + m[1] * d]); continue; }
+      const turn = nIn[0] * nOut[1] - nIn[1] * nOut[0]; // > 0: the normal turns left, the offset side is outside
+      const dot = Math.max(-1, Math.min(1, nIn[0] * nOut[0] + nIn[1] * nOut[1]));
+      if (Math.abs(turn) < 1e-6 && dot > 0) { out.push([p[0] + nIn[0] * d, p[1] + nIn[1] * d]); continue; }
+      if (turn * side > 0 || (turn === 0 && dot < 0)) {
+        // Outer corner: a round bend from one normal to the other.
+        const a0 = Math.atan2(nIn[1], nIn[0]);
+        let delta = Math.atan2(nOut[1], nOut[0]) - a0;
+        while (delta > Math.PI) delta -= 2 * Math.PI;
+        while (delta < -Math.PI) delta += 2 * Math.PI;
+        const steps = Math.max(1, Math.ceil(Math.abs(delta) / 0.3));
+        for (let s = 0; s <= steps; s++) { const a = a0 + (delta * s) / steps; out.push([p[0] + Math.cos(a) * d, p[1] + Math.sin(a) * d]); }
+      } else {
+        // Inner corner: the mitre point, kept close in very sharp corners.
+        const [mx, my] = unit(nIn[0] + nOut[0], nIn[1] + nOut[1]);
+        const scale = 1 / Math.max(0.5, mx * nIn[0] + my * nIn[1]);
+        out.push([p[0] + mx * d * scale, p[1] + my * d * scale]);
       }
     }
-    // Consecutive points with the same offset form one piece; pieces share their end points.
-    const pieces = [];
-    let current = null;
-    points.forEach((p, i) => {
-      if (!current || current.off !== offs[i]) {
-        if (current) current.points.push(p);
-        current = { off: offs[i], points: current ? [current.points[current.points.length - 1], p] : [p] };
-        pieces.push(current);
-      } else current.points.push(p);
-    });
-    // GPS wobble makes an offset line curl in tight corners: the shifted pieces are smoothed (12 m) first.
-    return pieces.filter(piece => piece.points.length > 1)
-      .map(piece => (piece.off ? { off: piece.off, points: KK.ParcoursMap.straighten(piece.points, 0.012) } : piece));
+    return KK.ParcoursMap.untangle(out).map(([x, y]) => [x / kx, y / ky]);
   }
 
-  /** Douglas-Peucker: leaves out points closer than `km` to the straight line between their neighbours. */
-  static straighten(points, km) {
-    if (points.length < 3) return points;
-    const k = Math.cos((points[0][0] * Math.PI) / 180);
-    const xy = p => [p[1] * 111.32 * k, p[0] * 110.57];
-    const keep = new Array(points.length).fill(false);
-    keep[0] = keep[points.length - 1] = true;
-    const stack = [[0, points.length - 1]];
-    while (stack.length) {
-      const [a, b] = stack.pop();
-      const [ax, ay] = xy(points[a]), [bx, by] = xy(points[b]), len = Math.hypot(bx - ax, by - ay) || 1e-9;
-      let far = -1, farD = km;
-      for (let i = a + 1; i < b; i++) {
-        const [px, py] = xy(points[i]), d = Math.abs((bx - ax) * (ay - py) - (ax - px) * (by - ay)) / len;
-        if (d > farD) { farD = d; far = i; }
+  /** Cuts out the small loops a moved line makes in tight inner corners (segments that cross a little further on). */
+  static untangle(pts) {
+    const cross = (a, b, c, d) => {
+      const den = (b[0] - a[0]) * (d[1] - c[1]) - (b[1] - a[1]) * (d[0] - c[0]);
+      if (!den) return null;
+      const t = ((c[0] - a[0]) * (d[1] - c[1]) - (c[1] - a[1]) * (d[0] - c[0])) / den;
+      const u = ((c[0] - a[0]) * (b[1] - a[1]) - (c[1] - a[1]) * (b[0] - a[0])) / den;
+      return t > 0 && t < 1 && u > 0 && u < 1 ? [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])] : null;
+    };
+    const out = pts.slice();
+    for (let i = 0; i < out.length - 3; i++) {
+      for (let j = Math.min(out.length - 2, i + 40); j >= i + 2; j--) {
+        const x = cross(out[i], out[i + 1], out[j], out[j + 1]);
+        if (x) { out.splice(i + 1, j - i, x); break; }
       }
-      if (far > 0) { keep[far] = true; stack.push([a, far], [far, b]); }
     }
-    return points.filter((_, i) => keep[i]);
+    return out;
   }
 
   /** Road numbers (N33, E40) in small boxes on the main roads, like on race maps. */

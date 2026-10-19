@@ -240,7 +240,7 @@
     if (!state.profileSource && state.tracks.length) state.profileSource = state.tracks[0].id;
     changed('all');
     requestAnimationFrame(fit);
-    if (pmap.map) pmap.map.once('idle', () => { addTowns(true); setTimeout(placeLabels, 150); });
+    if (pmap.map) pmap.map.once('idle', () => { fit(); addTowns(true); setTimeout(placeLabels, 150); });
   }
 
   async function loadFiles(files) {
@@ -286,7 +286,7 @@
     requestAnimationFrame(fit);
     message('De parcours van Koolskamp Koers zijn geladen.', 'ok');
     // Once the map of the area is loaded: the towns along the route.
-    if (pmap.map) pmap.map.once('idle', () => { addTowns(true); setTimeout(placeLabels, 150); });
+    if (pmap.map) pmap.map.once('idle', () => { fit(); addTowns(true); setTimeout(placeLabels, 150); });
   }
 
   const trackKm = t => t.km || KK.gpx.lengthKm(t.points);
