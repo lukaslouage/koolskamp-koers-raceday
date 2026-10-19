@@ -266,7 +266,7 @@
     state.points = state.points.filter(p => !String(p.id).startsWith('kk-'));
     state.tracks.unshift(
       { id: 'kk-lap', name: 'Lokale ronde', color: '#FFD201', style: 'solid', visible: true, km: config.distances.localLap, points: strip(r.localLap) },
-      { id: 'kk-approach', name: 'Aanloop naar de finish', color: '#7A7A7A', style: 'solid', visible: true, km: config.distances.approachToFinish, points: strip(r.approach) },
+      { id: 'kk-approach', name: 'Aanloop naar de finish', color: '#7A7A7A', style: 'solid', beside: 'left', visible: true, km: config.distances.approachToFinish, points: strip(r.approach) },
       { id: 'kk-loop', name: 'Lus Ardooie', color: '#18181B', style: 'double', visible: true, km: config.distances.ardooieLoop, points: strip(r.ardooieLoop) },
     );
     const d = config.defaults, laps = n => `${n} ${n === 1 ? 'ronde' : 'rondes'}`;
@@ -529,6 +529,7 @@
         <button type="button" class="pm-icon" data-action="up" title="Naar boven (bovenop)"${i === 0 ? ' disabled' : ''}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg></button>
         <button type="button" class="pm-icon" data-action="delete" title="Verwijderen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
         </div>
+        ${t.beside || KK.ParcoursMap.sharedShare(t.points, state.tracks.filter(o => o !== t && o.visible !== false)) > 0.02 ? `<label class="pm-track__beside"><span>Gedeelde weg</span><select class="pm-mini" data-field="beside" aria-label="Waar dit parcours samenloopt met een ander">${options([['', 'Erover'], ['right', 'Ernaast, rechts'], ['left', 'Ernaast, links']], t.beside || '')}</select></label>` : ''}
         ${t.label ? `<input type="text" class="pm-text pm-track__laps" data-field="laps" value="${esc(t.laps || '')}" maxlength="80" placeholder="Onder het label, bv. Mannen 9 rondes / Vrouwen 7 rondes" aria-label="Tekst onder het label (een schuine streep begint een nieuwe regel)">` : ''}
       </div>`).join('') : '<p class="settings__note">Nog geen parcours. Laad een GPX of de parcours van Koolskamp Koers.</p>';
 

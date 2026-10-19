@@ -217,30 +217,139 @@ KK.ParcoursMap = class {
     if (this.options.shields && !theme.original) this.addShields(before);
     [...this.tracks].reverse().filter(t => t.visible !== false).forEach(track => {
       const id = `pm-${track.id}`, style = track.style || 'solid';
-      map.addSource(id, { type: 'geojson', data: { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: track.points.map(p => [p[1], p[0]]) } } });
+      // A route drawn beside the others: its shared parts are pieces with an offset (0 to 1, eased in and out).
+      const others = this.tracks.filter(t => t !== track && t.visible !== false);
+      const beside = track.beside && others.length ? KK.ParcoursMap.besidePieces(track.points, others) : null;
+      map.addSource(id, { type: 'geojson', data: beside
+        ? { type: 'FeatureCollection', features: beside.map(piece => ({ type: 'Feature', properties: { off: piece.off }, geometry: { type: 'LineString', coordinates: piece.points.map(p => [p[1], p[0]]) } })) }
+        : { type: 'Feature', properties: { off: 0 }, geometry: { type: 'LineString', coordinates: track.points.map(p => [p[1], p[0]]) } } });
       const border = KK.ParcoursMap.borderFor(track.color, theme), inner = KK.ParcoursMap.contrast(track.color);
       const striped = style === 'double' || style === 'neutral';
       const w = striped ? width * 1.3 : width;
       const layout = cap => ({ 'line-join': 'round', 'line-cap': cap });
+      // Centre to centre: half of each line, their borders and a small gap. Right of the direction is positive.
+      const shift = beside ? ['*', ['get', 'off'], (track.beside === 'left' ? -1 : 1) * (w + 4.5)] : 0;
+      const offset = beside ? { 'line-offset': shift } : {};
       map.addLayer({ id: `${id}-shadow`, type: 'line', source: id, layout: layout('round'),
-        paint: { 'line-color': theme.dark ? '#000000' : '#202024', 'line-opacity': theme.dark ? 0.5 : 0.22, 'line-width': w + 6, 'line-blur': 4, 'line-translate': [0, 1.5] } }, before);
+        paint: { 'line-color': theme.dark ? '#000000' : '#202024', 'line-opacity': theme.dark ? 0.5 : 0.22, 'line-width': w + 6, 'line-blur': 4, 'line-translate': [0, 1.5], ...offset } }, before);
       map.addLayer({ id: `${id}-casing`, type: 'line', source: id, layout: layout('round'),
-        paint: { 'line-color': border, 'line-width': w + (theme.thinBorder ? 2.4 : 3.5) } }, before);
+        paint: { 'line-color': border, 'line-width': w + (theme.thinBorder ? 2.4 : 3.5), ...offset } }, before);
       map.addLayer({ id: `${id}-line`, type: 'line', source: id, layout: layout(style === 'dashed' ? 'butt' : 'round'),
-        paint: { 'line-color': track.color, 'line-width': w, ...(style === 'dashed' ? { 'line-dasharray': [2, 1.4] } : {}) } }, before);
+        paint: { 'line-color': track.color, 'line-width': w, ...offset, ...(style === 'dashed' ? { 'line-dasharray': [2, 1.4] } : {}) } }, before);
       if (striped) {
         map.addLayer({ id: `${id}-stripe`, type: 'line', source: id, layout: layout(style === 'neutral' ? 'butt' : 'round'),
-          paint: { 'line-color': inner, 'line-width': Math.max(1.4, w * 0.36), ...(style === 'neutral' ? { 'line-dasharray': [1.6, 1.6] } : {}) } }, before);
+          paint: { 'line-color': inner, 'line-width': Math.max(1.4, w * 0.36), ...offset, ...(style === 'neutral' ? { 'line-dasharray': [1.6, 1.6] } : {}) } }, before);
       }
       if (this.options.arrows && style !== 'neutral') {
         // Small chevrons on the line: in the route colour on the middle stripe, else in the contrasting colour.
         const size = (w * (striped ? 1 : 0.95)) / 12;
-        map.addLayer({ id: `${id}-arrows`, type: 'symbol', source: id,
+        // Arrows cannot be moved sideways: on the parts beside another route they are left out.
+        map.addLayer({ id: `${id}-arrows`, type: 'symbol', source: id, filter: ['==', ['get', 'off'], 0],
           layout: { 'symbol-placement': 'line', 'symbol-spacing': 160, 'icon-image': 'pm-arrow', 'icon-size': size,
             'icon-rotation-alignment': 'map', 'icon-allow-overlap': true, 'icon-ignore-placement': true },
           paint: { 'icon-color': striped ? track.color : inner } }, before);
       }
     });
+  }
+
+  /**
+   * For every point of a line: does it run on top of one of the other routes (within 40 m)? Short runs of
+   * either kind (under 150 m) are smoothed away, so GPS noise does not make the line jump.
+   */
+  static sharedFlags(points, others, metres = 40) {
+    const cell = 0.001, grid = new Map(), key = (a, b) => `${a},${b}`;
+    others.forEach(t => t.points.forEach(p => {
+      const k = key(Math.floor(p[0] / cell), Math.floor(p[1] / cell));
+      if (!grid.has(k)) grid.set(k, []);
+      grid.get(k).push(p);
+    }));
+    const flags = points.map(p => {
+      const a = Math.floor(p[0] / cell), b = Math.floor(p[1] / cell);
+      for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) {
+        const list = grid.get(key(a + i, b + j));
+        if (list && list.some(q => KK.gpx.haversineKm(p, q) * 1000 < metres)) return true;
+      }
+      return false;
+    });
+    const cum = KK.gpx.cumulative(points);
+    for (const value of [false, true]) {
+      let i = 0;
+      while (i < flags.length) {
+        if (flags[i] !== value) { i++; continue; }
+        let j = i;
+        while (j + 1 < flags.length && flags[j + 1] === value) j++;
+        if (i > 0 && j < flags.length - 1 && cum[j] - cum[i] < 0.15) for (let k = i; k <= j; k++) flags[k] = !value;
+        i = j + 1;
+      }
+    }
+    return { flags, cum };
+  }
+
+  /** Share of a line (0 to 1) that runs on top of the other routes. */
+  static sharedShare(points, others) {
+    if (!others.length || points.length < 2) return 0;
+    const { flags, cum } = KK.ParcoursMap.sharedFlags(points, others);
+    let km = 0;
+    for (let i = 1; i < flags.length; i++) if (flags[i] && flags[i - 1]) km += cum[i] - cum[i - 1];
+    return km / cum[cum.length - 1];
+  }
+
+  /**
+   * The line cut in pieces with an offset: 0 where it runs alone, 1 where it shares the road with another route,
+   * and steps in between over the first and last 120 m of a shared part, so it moves aside smoothly.
+   */
+  static besidePieces(points, others) {
+    const { flags, cum } = KK.ParcoursMap.sharedFlags(points, others);
+    const ramp = 0.12, steps = 6;
+    // Distance to the nearest point that is not shared (0 when not shared), in both directions.
+    const offs = flags.map(() => 0);
+    let start = null;
+    for (let i = 0; i <= flags.length; i++) {
+      if (i < flags.length && flags[i]) { if (start === null) start = i; continue; }
+      if (start !== null) {
+        const end = i - 1, openStart = start > 0, openEnd = end < flags.length - 1;
+        for (let k = start; k <= end; k++) {
+          const fromStart = openStart ? cum[k] - cum[start] : Infinity, toEnd = openEnd ? cum[end] - cum[k] : Infinity;
+          const t = Math.min(1, Math.min(fromStart, toEnd) / ramp);
+          offs[k] = Math.round(t * steps) / steps;
+        }
+        start = null;
+      }
+    }
+    // Consecutive points with the same offset form one piece; pieces share their end points.
+    const pieces = [];
+    let current = null;
+    points.forEach((p, i) => {
+      if (!current || current.off !== offs[i]) {
+        if (current) current.points.push(p);
+        current = { off: offs[i], points: current ? [current.points[current.points.length - 1], p] : [p] };
+        pieces.push(current);
+      } else current.points.push(p);
+    });
+    // GPS wobble makes an offset line curl in tight corners: the shifted pieces are smoothed (12 m) first.
+    return pieces.filter(piece => piece.points.length > 1)
+      .map(piece => (piece.off ? { off: piece.off, points: KK.ParcoursMap.straighten(piece.points, 0.012) } : piece));
+  }
+
+  /** Douglas-Peucker: leaves out points closer than `km` to the straight line between their neighbours. */
+  static straighten(points, km) {
+    if (points.length < 3) return points;
+    const k = Math.cos((points[0][0] * Math.PI) / 180);
+    const xy = p => [p[1] * 111.32 * k, p[0] * 110.57];
+    const keep = new Array(points.length).fill(false);
+    keep[0] = keep[points.length - 1] = true;
+    const stack = [[0, points.length - 1]];
+    while (stack.length) {
+      const [a, b] = stack.pop();
+      const [ax, ay] = xy(points[a]), [bx, by] = xy(points[b]), len = Math.hypot(bx - ax, by - ay) || 1e-9;
+      let far = -1, farD = km;
+      for (let i = a + 1; i < b; i++) {
+        const [px, py] = xy(points[i]), d = Math.abs((bx - ax) * (ay - py) - (ax - px) * (by - ay)) / len;
+        if (d > farD) { farD = d; far = i; }
+      }
+      if (far > 0) { keep[far] = true; stack.push([a, far], [far, b]); }
+    }
+    return points.filter((_, i) => keep[i]);
   }
 
   /** Road numbers (N33, E40) in small boxes on the main roads, like on race maps. */

@@ -948,6 +948,8 @@ html.is-printing .credits__more { font-size: 10px; }
 .pm-list .pm-num--small { width: calc(var(--u) * 2.3); height: calc(var(--u) * 2.3); font-size: calc(var(--u) * 1.2); box-shadow: none; }
 .pm-list .pm-key__icon { width: calc(var(--u) * 2); height: calc(var(--u) * 2); }
 .pm-track__laps { height: 28px; font-size: 12.5px; }
+.pm-track__beside { display: flex; white-space: nowrap; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--muted); }
+.pm-track__beside .pm-mini { flex: 0 1 auto; min-width: 0; }
 
 /* North arrow and scale bar bottom left */
 .pm-scale { position: absolute; z-index: 3; left: calc(var(--u) * 2.6); bottom: calc(var(--u) * 2.4); display: flex; align-items: flex-end; gap: calc(var(--u) * 1.4); color: #111111; }

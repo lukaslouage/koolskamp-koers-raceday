@@ -10,7 +10,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css">
-<link rel="stylesheet" href="css/styles.css?v=2.2">
+<link rel="stylesheet" href="css/styles.css?v=2.3">
 </head>
 <body>
 
@@ -44,7 +44,7 @@
     <div class="settings">
 
 <section class="settings__group">
-<h3 class="settings__heading">Parcours <button type="button" class="info" data-info="Laad een of meer GPX-bestanden, bijvoorbeeld uit Strava, Komoot, RideWithGPS of Garmin. Elk spoor wordt een lijn op de kaart: geef het een naam, een kleur en een stijl. 'Met middenstreep' geeft een lijn met een streep in het midden, 'Geneutraliseerd' een gestreepte middenlijn voor het stuk voor km 0. Met het labeltje zet je de naam en de lengte op de kaart, met eronder bijvoorbeeld het aantal rondes. Het bovenste spoor ligt bovenop. Je kunt GPX-bestanden ook gewoon op de kaart slepen. Alles blijft enkel in deze browser bewaard." aria-label="Uitleg" aria-expanded="false">i</button></h3>
+<h3 class="settings__heading">Parcours <button type="button" class="info" data-info="Laad een of meer GPX-bestanden, bijvoorbeeld uit Strava, Komoot, RideWithGPS of Garmin. Elk spoor wordt een lijn op de kaart: geef het een naam, een kleur en een stijl. 'Met middenstreep' geeft een lijn met een streep in het midden, 'Geneutraliseerd' een gestreepte middenlijn voor het stuk voor km 0. Loopt een parcours deels over een ander (zoals de aanloop over de lus en de lokale ronde), dan kun je het bij 'Gedeelde weg' ernaast laten tekenen: waar de wegen samenlopen ligt de lijn links of rechts naast de andere, op de rest volgt ze gewoon de straat. Met het labeltje zet je de naam en de lengte op de kaart, met eronder bijvoorbeeld het aantal rondes. Het bovenste spoor ligt bovenop. Je kunt GPX-bestanden ook gewoon op de kaart slepen. Alles blijft enkel in deze browser bewaard." aria-label="Uitleg" aria-expanded="false">i</button></h3>
 <div class="pm-tracks" id="pm-tracks"></div>
 <div class="pm-actions">
 <label class="btn btn--secondary btn--small"><input type="file" id="pm-file" accept=".gpx,application/gpx+xml" multiple hidden>GPX laden</label>
@@ -127,13 +127,13 @@
 <div class="export-overlay" id="export-overlay" hidden><span class="spinner" aria-hidden="true"></span>Afbeelding wordt gemaakt</div>
 
 <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
-<script src="data/route-data.js?v=2.2"></script>
-<script src="js/config.js?v=2.2"></script>
-<script src="js/format.js?v=2.2"></script>
-<script src="js/info.js?v=2.2"></script>
-<script src="js/pdf-export.js?v=2.2"></script>
-<script src="js/gpx.js?v=2.2"></script>
-<script src="js/parcours-map.js?v=2.2"></script>
-<script src="js/parcours.js?v=2.2"></script>
+<script src="data/route-data.js?v=2.3"></script>
+<script src="js/config.js?v=2.3"></script>
+<script src="js/format.js?v=2.3"></script>
+<script src="js/info.js?v=2.3"></script>
+<script src="js/pdf-export.js?v=2.3"></script>
+<script src="js/gpx.js?v=2.3"></script>
+<script src="js/parcours-map.js?v=2.3"></script>
+<script src="js/parcours.js?v=2.3"></script>
 </body>
 </html>
